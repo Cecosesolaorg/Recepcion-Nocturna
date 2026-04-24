@@ -615,7 +615,9 @@
                 savedSuppliers.unshift(name); 
                 localStorage.setItem(SUPPLIERS_LIST_KEY, JSON.stringify(savedSuppliers));
 
-                supplierNameDisplay.textContent = name;
+                if (supplierNameDisplay) {
+                    supplierNameDisplay.textContent = name;
+                }
                 
                 renderDropdownSuppliers();
                 closeSupplierNameModal();
@@ -651,10 +653,15 @@
         function getDestAbbr(obs) {
             if (!obs) return '';
             const u = obs.toUpperCase();
+            if (u.includes('RC') || u.includes('RECONOCER')) {
+                if (u.includes('-MF')) return 'RC-MF';
+                if (u.includes('-FG')) return 'RC-FG';
+                if (u.includes('-F')) return 'RC-F';
+                return 'RC';
+            }
             if (u.includes('MINI FERIA')) return 'MF';
             if (u.includes('FERIA GRANDE')) return 'FG';
             if (u.includes('FRUTERIA') || u.includes('FRUTERÍA')) return 'F';
-            if (u.includes('RC') || u.includes('RECONOCER')) return 'RC';
             return 'OTRO';
         }
 
@@ -707,6 +714,9 @@
                                    .replace(/FRUTERIA/i, '')
                                    .replace(/FRUTERÍA/i, '')
                                    .replace(/RECONOCER/i, '')
+                                   .replace(/RC-MF/i, '')
+                                   .replace(/RC-FG/i, '')
+                                   .replace(/RC-F/i, '')
                                    .replace(/RC/i, '');
                 cleanObs = cleanObs.replace(/^[.\-\s]+/, '').trim();
 
@@ -930,9 +940,10 @@
                 if (!menuDropdown.classList.contains('hidden')) {
                     if(menuSearchInput) {
                         menuSearchInput.value = ''; 
-                        menuSearchInput.focus(); 
+                        // menuSearchInput.focus(); // Eliminado a petición del usuario para evitar teclado emergente en móviles
                         filterMenuLocations(''); 
                     }
+                    menuDropdown.scrollTop = 0; // Asegurar que siempre empiece desde arriba
                 }
             }
         }
@@ -1002,17 +1013,17 @@
                 // Si el label ya contiene el nombre (ej: "PROVEEDOR: JUAN"), lo respetamos
                 if (selectedText.includes("RECEPCIÓN PROVEEDOR") && currentSupplier) {
                      // Si es el click inicial del menú y ya hay un proveedor guardado
-                     contextSubtitle.textContent = `PROVEEDOR: ${currentSupplier}`;
+                     if (contextSubtitle) contextSubtitle.textContent = `PROVEEDOR: ${currentSupplier}`;
                      activeMenuItemText.textContent = `PROVEEDOR: ${currentSupplier}`; 
                      currentActiveLabel = `PROVEEDOR: ${currentSupplier}`; // Actualizar label en memoria
                 } else {
-                     contextSubtitle.textContent = selectedText; 
+                     if (contextSubtitle) contextSubtitle.textContent = selectedText; 
                      activeMenuItemText.textContent = selectedText; 
                 }
-                supplierIndicator.classList.remove('hidden'); 
+                if (supplierIndicator) supplierIndicator.classList.remove('hidden'); 
             } else {
-                contextSubtitle.textContent = `${selectedText} - Registro Activo`;
-                supplierIndicator.classList.add('hidden'); 
+                if (contextSubtitle) contextSubtitle.textContent = `${selectedText} - Registro Activo`;
+                if (supplierIndicator) supplierIndicator.classList.add('hidden'); 
             }
 
             searchContainer.classList.remove('hidden');
@@ -1057,8 +1068,8 @@
             
             if (selectedKey === 'STATS_VIEW') {
                 viewMode = 'stats';
-                contextSubtitle.textContent = `ESTADÍSTICA`; 
-                supplierIndicator.classList.add('hidden');
+                if (contextSubtitle) contextSubtitle.textContent = `ESTADÍSTICA`; 
+                if (supplierIndicator) supplierIndicator.classList.add('hidden');
                 
                 searchContainer.classList.remove('hidden');
                 searchInput.value = ''; 
@@ -1182,15 +1193,28 @@
             const uniqueKey = contextKey + '_' + productId;
             productGeneralNote.value = productNotes[uniqueKey] || '';
 
+            let nonRcCount = 0;
             logs.forEach(log => {
+                const obs = (log.observation || '').toUpperCase();
+                if (!obs.includes('RC') && !obs.includes('RECONOCER')) nonRcCount++;
+            });
+            let currentPiece = nonRcCount;
+
+            logs.forEach((log, index) => {
                 const logTime = new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 const kg = (log.desperdicio_kg % 1 === 0) ? log.desperdicio_kg : log.desperdicio_kg.toFixed(2);
                 const obs = log.observation.replace("Destino: ", "");
                 
                 const isRC = obs.includes("RC") || obs.includes("RECONOCER");
+                
+                let piecePrefix = '';
+                if (!isRC) {
+                    piecePrefix = `P#${String(currentPiece).padStart(2, '0')} • `;
+                    currentPiece--;
+                }
 
                 const row = document.createElement('div');
-                row.className = "flex justify-between items-center bg-gray-50 border border-gray-200 rounded p-2 text-sm relative";
+                row.className = `flex justify-between items-center ${isRC ? 'bg-orange-50' : 'bg-gray-50'} border border-gray-200 rounded p-2 text-sm relative`;
                 
                 const editAction = `editRecordFromRecognition('${productId}', ${log.timestamp}, ${log.desperdicio_kg}, '${productName.replace(/'/g, "\\'")}', '${contextKey}')`;
                 const editBtnHtml = `
@@ -1214,8 +1238,8 @@
                 row.innerHTML = `
                     ${editBtnHtml}
                     <div class="flex flex-col pr-6">
-                        <span class="font-bold text-gray-800 text-base">${kg} KG</span>
-                        <span class="text-xs text-gray-500 font-semibold uppercase">${obs} - ${logTime}</span>
+                        <span class="font-bold ${isRC ? 'text-orange-800' : 'text-gray-800'} text-base">${piecePrefix}${kg} KG</span>
+                        <span class="text-xs ${isRC ? 'text-orange-500' : 'text-gray-500'} font-semibold uppercase">${obs} - ${logTime}</span>
                         ${btnHtml}
                     </div>
                 `;
@@ -1309,14 +1333,16 @@
             const originalLog = logs[logIndex];
             originalLog.desperdicio_kg = originalLog.desperdicio_kg - amountVal;
             
+            const origAbbr = getDestAbbr(originalLog.observation);
+            
             const newLog = {
                 ...originalLog, 
                 desperdicio_kg: amountVal,
                 timestamp: Date.now(), 
-                observation: "Destino: RC" 
+                observation: origAbbr !== 'OTRO' ? `Destino: RC-${origAbbr}` : "Destino: RC" 
             };
 
-            logs.push(newLog); 
+            logs.push(newLog);  
             
             store[dbKey][pId] = logs;
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(store));
@@ -1738,14 +1764,31 @@
                     let totalF = 0;
                     let totalRC = 0; 
                     
+                    let rcFG = 0;
+                    let rcMF = 0;
+                    let rcF = 0;
+                    let rcOther = 0;
+                    
+                    let nonRcCount = 0;
+                    item.registros.forEach(log => {
+                        const obs = (log.observation || '').toUpperCase();
+                        if (!obs.includes('RC') && !obs.includes('RECONOCER')) nonRcCount++;
+                    });
+                    let currentPiece = nonRcCount;
+                    
                     let detailedBreakdownHtml = '<div class="px-3 pb-2 pt-1 flex flex-wrap gap-1 border-t border-gray-100">';
                     
-                    item.registros.forEach(log => {
+                    item.registros.forEach((log, index) => {
                         const kg = log.desperdicio_kg;
                         const obs = (log.observation || '').toUpperCase();
                         
-                        if (obs.includes('RC') || obs.includes('RECONOCER')) {
+                        const isRC = obs.includes('RC') || obs.includes('RECONOCER');
+                        if (isRC) {
                             totalRC += kg;
+                            if (obs.includes('-FG')) rcFG += kg;
+                            else if (obs.includes('-MF')) rcMF += kg;
+                            else if (obs.includes('-F')) rcF += kg;
+                            else rcOther += kg;
                         } else if (obs.includes('FERIA GRANDE')) {
                             totalFG += kg;
                         } else if (obs.includes('MINI FERIA')) {
@@ -1756,18 +1799,45 @@
                         
                         const singleKg = (kg % 1 === 0) ? kg : kg.toFixed(2);
                         const singleAbbr = getDestAbbr(log.observation);
-                        detailedBreakdownHtml += `<span class="bg-gray-600 text-white px-2 py-1 rounded text-xs font-bold shadow-sm">${singleKg} (${singleAbbr})</span>`;
+                        const bgColor = isRC ? 'bg-orange-500' : 'bg-gray-600';
+                        
+                        let piecePrefix = '';
+                        if (!isRC) {
+                            piecePrefix = `P#${String(currentPiece).padStart(2, '0')} • `;
+                            currentPiece--;
+                        }
+                        
+                        detailedBreakdownHtml += `<span class="${bgColor} text-white px-2 py-1 rounded text-xs font-bold shadow-sm">${piecePrefix}${singleKg} (${singleAbbr})</span>`;
                     });
                     
                     detailedBreakdownHtml += '</div>';
 
                     const fmt = (n) => (n % 1 === 0) ? n : n.toFixed(2);
 
-                    let breakdownHtml = `<div class="flex flex-col text-right ml-2 leading-tight">`;
-                    if (totalFG > 0) breakdownHtml += `<span class="text-xs font-bold ${textBreakdownRedClass}">FG:${fmt(totalFG)}</span>`;
-                    if (totalMF > 0) breakdownHtml += `<span class="text-xs font-bold ${textBreakdownRedClass}">MF:${fmt(totalMF)}</span>`;
-                    if (totalF > 0) breakdownHtml += `<span class="text-xs font-bold ${textBreakdownRedClass}">F:${fmt(totalF)}</span>`;
-                    if (totalRC > 0) breakdownHtml += `<span class="text-xs font-bold ${hasNote ? 'text-yellow-300' : 'text-orange-500'}">RC:${fmt(totalRC)}</span>`;
+                    let breakdownHtml = `<div class="flex flex-col text-right ml-2 leading-tight whitespace-nowrap">`;
+                    
+                    if (totalFG > 0 || rcFG > 0) {
+                        let textHtml = '';
+                        if (rcFG > 0) textHtml += `<span class="${hasNote ? 'text-yellow-300' : 'text-orange-500'} mr-1">RC-FG:${fmt(rcFG)}</span>`;
+                        if (totalFG > 0) textHtml += `<span class="${textBreakdownRedClass}">FG:${fmt(totalFG)}</span>`;
+                        breakdownHtml += `<span class="text-[11px] font-bold flex items-center justify-end">${textHtml}</span>`;
+                    }
+                    if (totalMF > 0 || rcMF > 0) {
+                        let textHtml = '';
+                        if (rcMF > 0) textHtml += `<span class="${hasNote ? 'text-yellow-300' : 'text-orange-500'} mr-1">RC-MF:${fmt(rcMF)}</span>`;
+                        if (totalMF > 0) textHtml += `<span class="${textBreakdownRedClass}">MF:${fmt(totalMF)}</span>`;
+                        breakdownHtml += `<span class="text-[11px] font-bold flex items-center justify-end">${textHtml}</span>`;
+                    }
+                    if (totalF > 0 || rcF > 0) {
+                        let textHtml = '';
+                        if (rcF > 0) textHtml += `<span class="${hasNote ? 'text-yellow-300' : 'text-orange-500'} mr-1">RC-F:${fmt(rcF)}</span>`;
+                        if (totalF > 0) textHtml += `<span class="${textBreakdownRedClass}">F:${fmt(totalF)}</span>`;
+                        breakdownHtml += `<span class="text-[11px] font-bold flex items-center justify-end">${textHtml}</span>`;
+                    }
+                    if (rcOther > 0) {
+                        breakdownHtml += `<span class="text-[11px] font-bold ${hasNote ? 'text-yellow-300' : 'text-orange-500'} flex items-center justify-end">RC:${fmt(rcOther)}</span>`;
+                    }
+                    
                     breakdownHtml += `<span class="text-sm font-extrabold ${textBreakdownTotalClass} ${hasNote ? 'border-red-400' : 'border-red-200'} border-t mt-0.5 pt-0.5">T:${fmt(item.contextTotalKg)}KG</span>`;
                     breakdownHtml += `</div>`;
 
@@ -1778,15 +1848,15 @@
                     htmlContent += `
                         <div class="${cardBgClass} border rounded-lg shadow-sm overflow-hidden mb-1" onclick="${rowAction}">
                             <div class="flex justify-between items-center p-3 ${hasNote ? 'border-red-400 hover:bg-red-400' : 'border-gray-100 hover:bg-white'} transition cursor-pointer relative">
-                                <div class="flex items-center flex-grow py-1" onclick="event.stopPropagation(); window.openModalInStats('${item.id}', '${item.contextKey}', ${item.isProvider ? 'true' : 'false'})"> 
-                                    <span class="text-xs font-bold mr-2 w-5 ${hasNote ? 'text-red-200' : 'text-gray-400'}">${index + 1}.</span>
-                                    <img src="${item.imageUrl}" class="product-image" onerror="this.onerror=null; this.src='${DEFAULT_IMAGE_URL}'">
-                                    <div class="flex flex-col ml-1">
-                                        <span class="text-sm font-bold leading-tight ${textMainClass}">${item.name}</span>
-                                        <span class="text-[10px] text-gray-400 font-bold mt-0.5">TOCA PARA AÑADIR +</span>
+                                <div class="flex items-center flex-grow py-1 min-w-0" onclick="event.stopPropagation(); window.openModalInStats('${item.id}', '${item.contextKey}', ${item.isProvider ? 'true' : 'false'})"> 
+                                    <span class="text-xs font-bold mr-2 w-4 flex-shrink-0 ${hasNote ? 'text-red-200' : 'text-gray-400'}">${index + 1}.</span>
+                                    <img src="${item.imageUrl}" class="product-image flex-shrink-0" onerror="this.onerror=null; this.src='${DEFAULT_IMAGE_URL}'">
+                                    <div class="flex flex-col ml-1 min-w-0 pr-1">
+                                        <span class="text-[11px] font-bold leading-tight ${textMainClass} break-words">${item.name}</span>
+                                        <span class="text-[9px] text-gray-400 font-bold mt-0.5 whitespace-nowrap">TOCA PARA AÑADIR +</span>
                                     </div>
                                 </div>
-                                <div class="flex flex-col items-end">
+                                <div class="flex flex-col items-end flex-shrink-0">
                                     ${breakdownHtml}
                                 </div>
                             </div>
@@ -1841,4 +1911,4 @@
         searchInput.addEventListener('input', filterProducts);
         updateResponsibleUI();
         changeDataContext(dataContext);
-        renderDropdownSuppliers();
+        renderDropdownSuppliers();
